@@ -1,0 +1,18 @@
+# Secrets (not currently used, but just in case)
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated output (reports, drafts, knowledge graph renders)
+output/
+
+# Third-party reference material — not mine to redistribute
+Knowledge Graph Documents/
+
+# Editor
+.vscode/
+.idea/
