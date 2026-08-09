@@ -15,7 +15,19 @@ Finds and drafts federal grant applications for YEA Today's youth entrepreneursh
 
 ---
 
-## One-time Setup
+## Live Demo
+
+`app.py` is a Streamlit web version — same three live data sources, but ranks results with Gemini (cloud) instead of local Ollama so it works as a public deployment, and skips the CLI's draft-writing phase to keep a run under a minute.
+
+```bash
+pip install -r requirements.txt
+export GEMINI_API_KEY=your_key   # free at aistudio.google.com
+streamlit run app.py
+```
+
+---
+
+## One-time Setup (CLI version)
 
 ### Step 1 — Install Python
 You need Python 3.10 or newer.  

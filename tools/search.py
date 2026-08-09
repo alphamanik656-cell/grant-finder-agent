@@ -2,18 +2,23 @@ import requests
 
 GRANTS_GOV_URL = "https://apply07.grants.gov/grantsws/rest/opportunities/search/"
 
-RELEVANT_CATEGORIES = "YS:ED:WD:OZ"  # Youth Services, Education, Workforce Dev, Other
-
 
 def search_grants_gov(keyword: str, rows: int = 25) -> list[dict]:
     """
     Search Grants.gov for federal grant opportunities.
     Free public API — no key required.
+
+    Note: earlier versions of this function passed `oppStatuses`
+    ("posted:forecasted") and `fundingCategories` ("YS:ED:WD:OZ") filters,
+    but Grants.gov's API silently returns zero hits for both — the
+    separator/codes don't match what the current API expects, and there's
+    no error, just an empty result set. Omitting them lets the API fall
+    back to its own default (open + forecasted grants), which works
+    correctly; relevance is instead handled by the AI ranking step
+    downstream, same as it already was.
     """
     payload = {
         "keyword": keyword,
-        "oppStatuses": "posted:forecasted",
-        "fundingCategories": RELEVANT_CATEGORIES,
         "rows": rows,
         "sortBy": "openDate|desc",
     }

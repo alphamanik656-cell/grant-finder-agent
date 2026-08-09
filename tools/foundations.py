@@ -183,10 +183,13 @@ def _scrape(url: str) -> str:
     return text[:_CONTENT_LIMIT]
 
 
-def fetch_all(verbose: bool = True) -> list[dict]:
+def fetch_all(verbose: bool = True, on_progress=None) -> list[dict]:
     """
     Scrape all foundation grant pages and return a list of dicts with
     name, about, url, and scraped page content.
+
+    on_progress, if given, is called as on_progress(i, total, name) before
+    each fetch — lets callers (e.g. a Streamlit UI) show live progress.
     """
     results = []
     total = len(FOUNDATIONS)
@@ -194,6 +197,8 @@ def fetch_all(verbose: bool = True) -> list[dict]:
     for i, f in enumerate(FOUNDATIONS, 1):
         if verbose:
             print(f"  [{i}/{total}] {f['name']}")
+        if on_progress:
+            on_progress(i, total, f["name"])
         content = _scrape(f["url"])
         results.append(
             {
