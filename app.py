@@ -41,7 +41,14 @@ def gemini(prompt: str) -> str:
         )
         return response.text or "*(Gemini returned an empty response.)*"
     except Exception as exc:
-        return f"*(AI ranking failed: {exc})*"
+        message = str(exc)
+        if "429" in message or "RESOURCE_EXHAUSTED" in message or "quota" in message.lower():
+            return (
+                "*(AI ranking is temporarily unavailable — the free-tier API quota "
+                "was hit. The live search results above are still real and complete; "
+                "try again in a bit for AI-ranked scoring.)*"
+            )
+        return "*(AI ranking failed unexpectedly. The live search results above are still real and complete.)*"
 
 
 st.title("🔍 YEA Today Grant Finder")
