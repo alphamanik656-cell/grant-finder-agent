@@ -1,12 +1,5 @@
 """
 YEA Today Grant Finder — Streamlit Frontend
-Run with: streamlit run app.py
-
-This is a scoped, cloud-friendly version of agent.py: it runs the same three
-live data sources (Grants.gov, foundation scraper, ProPublica), but uses
-Gemini instead of local Ollama for the AI ranking step (so it works on a
-public deployment), and skips the CLI's draft-writing phase to keep a demo
-run to well under a minute instead of ~15.
 """
 
 import os
@@ -15,8 +8,8 @@ from datetime import datetime
 import streamlit as st
 
 from agent import SYSTEM_PROMPT, format_federal_grants, format_foundation_data
-from tools.files import report_as_docx_bytes, report_as_pdf_bytes
 from config import SEARCH_QUERIES
+from tools.files import report_as_docx_bytes, report_as_pdf_bytes
 from tools.foundations import FOUNDATIONS, fetch_all as fetch_foundations
 from tools.propublica import find_foundation_prospects, format_for_ai as format_prospects
 from tools.search import deduplicate, search_grants_gov
@@ -28,42 +21,120 @@ st.set_page_config(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL   = "gemini-2.0-flash"
 
 
-def gemini(prompt: str) -> str:
+# ── AI helper ──────────────────────────────────────────────────────────────────
+
+def gemini(prompt: str) -> str | None:
+    """Call Gemini. Returns None on any failure so callers can skip gracefully."""
+    if not GEMINI_API_KEY:
+        return None
     try:
         from google import genai
-
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client   = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=f"{SYSTEM_PROMPT}\n\n{prompt}",
         )
-        return response.text or "*(Gemini returned an empty response.)*"
-    except Exception as exc:
-        message = str(exc)
-        if "429" in message or "RESOURCE_EXHAUSTED" in message or "quota" in message.lower():
-            return (
-                "*(AI ranking is temporarily unavailable — the free-tier API quota "
-                "was hit. The live search results above are still real and complete; "
-                "try again in a bit for AI-ranked scoring.)*"
-            )
-        return "*(AI ranking failed unexpectedly. The live search results above are still real and complete.)*"
+        return response.text or None
+    except Exception:
+        return None
 
+
+# ── Raw-data formatters (always run, no AI needed) ─────────────────────────────
+
+def _fmt_award(g: dict) -> str:
+    c = g.get("award_ceiling")
+    if isinstance(c, (int, float)) and c:
+        return f"${c:,.0f}"
+    return str(c) if c else "Not specified"
+
+
+def build_federal_section(grants: list[dict]) -> str:
+    if not grants:
+        return "_No federal grants found for these search terms._\n"
+    lines = [
+        f"## Federal Grant Opportunities",
+        f"**{len(grants)} grants found on Grants.gov** — each link goes directly to the full listing\n",
+    ]
+    for i, g in enumerate(grants, 1):
+        deadline = g.get("close_date") or "TBD"
+        desc     = (g.get("description") or "").strip()
+        if len(desc) > 300:
+            desc = desc[:297] + "..."
+        lines += [
+            f"### {i}. {g['title']}",
+            f"- **Agency:** {g['agency']}",
+            f"- **Award ceiling:** {_fmt_award(g)}",
+            f"- **Deadline:** {deadline}",
+            f"- **Status:** {g.get('status', 'Unknown')}",
+            f"- **Apply:** [{g['url']}]({g['url']})",
+        ]
+        if desc:
+            lines.append(f"- **Description:** {desc}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def build_foundations_section(foundations: list[dict]) -> str:
+    if not foundations:
+        return "_No foundation data available._\n"
+    lines = [
+        "## Private Foundation Grant Pages",
+        f"**{len(foundations)} foundations reviewed** — click each grant portal link to check current open applications\n",
+    ]
+    for f in foundations:
+        lines += [
+            f"### {f['name']}",
+            f"- **What they fund:** {f['about']}",
+            f"- **Grant portal:** [{f['url']}]({f['url']})",
+            "",
+        ]
+    return "\n".join(lines)
+
+
+def build_report(today: str, federal_grants: list[dict], foundations: list[dict],
+                 ai_federal: str | None, ai_foundations: str | None) -> str:
+    federal_raw     = build_federal_section(federal_grants)
+    foundations_raw = build_foundations_section(foundations)
+
+    ai_block = ""
+    if ai_federal or ai_foundations:
+        ai_block = (
+            "## AI Fit Analysis\n"
+            + (ai_federal or "") + "\n\n"
+            + (ai_foundations or "") + "\n\n---\n\n"
+        )
+
+    return f"""# YEA Today — Grant Opportunities Report
+**Generated:** {today}
+**Sources:** Grants.gov (federal) | {len(foundations)} private foundation websites | ProPublica 990 data
+
+---
+
+{ai_block}{federal_raw}
+
+---
+
+{foundations_raw}
+
+---
+
+## How to Apply
+- **Federal grants:** click the Grants.gov link and hit "Apply" — you'll need a SAM.gov registration
+- **Foundation grants:** click each grant portal to check whether an application is currently open
+- All deadlines above are as of the report date — verify current deadlines before submitting
+"""
+
+
+# ── UI ─────────────────────────────────────────────────────────────────────────
 
 st.title("🔍 YEA Today Grant Finder")
 st.caption(
-    "Searches Grants.gov, 25 private foundation grant pages, and ProPublica's "
-    "nonprofit 990 filings live, then an AI ranks every match for fit — built "
-    "for YEA Today, a national youth entrepreneurship nonprofit."
+    "Searches Grants.gov, 25 private foundation grant pages, and ProPublica 990 filings "
+    "live — then lists every result with a direct link to apply."
 )
-
-if not GEMINI_API_KEY:
-    st.warning(
-        "AI ranking isn't configured on this deployment (missing GEMINI_API_KEY). "
-        "The live searches below still run — only the AI analysis step is skipped."
-    )
 
 run = st.button("🔍 Run Grant Search", type="primary")
 
@@ -71,12 +142,15 @@ if run:
     today = datetime.now().strftime("%B %d, %Y")
 
     with st.status("Searching Grants.gov for federal opportunities...", expanded=True) as status:
+
+        # Phase 1: Federal grants
         federal_grants = []
         for q in SEARCH_QUERIES:
             federal_grants.extend(search_grants_gov(q, rows=20))
         federal_grants = deduplicate(federal_grants)
         st.write(f"Found **{len(federal_grants)}** unique federal grants.")
 
+        # Phase 2: Foundation scraping
         status.update(label=f"Scraping {len(FOUNDATIONS)} private foundation grant pages...")
         progress = st.progress(0.0)
 
@@ -87,107 +161,92 @@ if run:
         progress.empty()
         st.write(f"Reviewed **{len(foundation_data)}** foundations.")
 
+        # Phase 3: ProPublica
         status.update(label="Cross-referencing ProPublica 990 filings...")
-        similar_orgs = find_foundation_prospects(max_orgs=10)
+        similar_orgs    = find_foundation_prospects(max_orgs=10)
+        prospect_summary = format_prospects(similar_orgs)
         st.write(f"Found **{len(similar_orgs)}** similar nonprofits in IRS 990 data.")
 
+        # Phase 4: Optional AI ranking
+        ai_federal = ai_foundations = None
         if GEMINI_API_KEY:
-            status.update(label="Ranking opportunities with AI...")
+            status.update(label="Running AI fit analysis (bonus)...")
+            ai_federal = gemini(f"""Today is {today}. For each of these {len(federal_grants)} federal grants, write one short paragraph assessing fit for YEA Today and give a fit score (X/10). Be concise.
 
-            federal_prompt = f"""Today is {today}. Analyze these {len(federal_grants)} federal grant opportunities from Grants.gov for YEA Today.
+{format_federal_grants(federal_grants)}""")
 
-{format_federal_grants(federal_grants)}
+            ai_foundations = gemini(f"""Today is {today}. For each foundation below, write one bullet with fit assessment and recommended action (Apply now / Submit LOI / Monitor / Low priority).
 
-Write the following Markdown section. Rank ALL relevant grants — do not limit to a fixed number:
-
-## Federal Grant Opportunities (Grants.gov)
-**Total found:** {len(federal_grants)} | **Source:** grants.gov
-
-### Ranked Opportunities
-For each grant that has any relevance to YEA Today, write:
-
-#### [Rank]. [Grant Title]
-- **Agency:** [agency name]
-- **Award amount:** [amount or "not specified"]
-- **Deadline:** [date or "TBD"]
-- **Status:** [posted / forecasted]
-- **Link:** [full URL]
-- **Fit assessment:** (2 sentences — why this matches YEA Today)
-- **Fit score:** [X/10]
-
-### Not a Match
-(One-line note for any grants that clearly don't fit YEA Today's mission)"""
-            federal_section = gemini(federal_prompt)
-
-            foundations_prompt = f"""Today is {today}. Analyze these {len(foundation_data)} private foundations for YEA Today and write an entry for EACH ONE.
-
-{format_foundation_data(foundation_data)}
-
-Then, based on this ProPublica 990 data about similar nonprofits, add a final "## Foundation Leads from 990 Data" section:
-{format_prospects(similar_orgs)}
-
-Use this format for every foundation — do not skip any:
-
-### [Foundation Name]
-- **Focus area:** [what they fund]
-- **Grant portal:** [exact URL from the data above]
-- **Status:** [Open grant available | Warm prospect — no open RFP | Invitation only | Requires registration]
-- **Fit for YEA Today:** (1 sentence)
-- **Recommended action:** [Apply now | Submit LOI | Monitor quarterly | Low priority]"""
-            foundations_section = gemini(foundations_prompt)
-        else:
-            federal_section = "*(AI ranking skipped — no GEMINI_API_KEY configured on this deployment.)*"
-            foundations_section = "*(AI ranking skipped — no GEMINI_API_KEY configured on this deployment.)*"
+{format_foundation_data(foundation_data[:15])}""")
 
         status.update(label="Done!", state="complete")
 
     st.session_state["result"] = {
-        "today": today,
-        "federal_count": len(federal_grants),
-        "foundation_count": len(foundation_data),
-        "prospect_count": len(similar_orgs),
-        "federal_section": federal_section,
-        "foundations_section": foundations_section,
+        "today":            today,
+        "federal_grants":   federal_grants,
+        "foundation_data":  foundation_data,
+        "prospect_count":   len(similar_orgs),
+        "ai_federal":       ai_federal,
+        "ai_foundations":   ai_foundations,
     }
+
+
+# ── Results display ────────────────────────────────────────────────────────────
 
 if "result" in st.session_state:
     r = st.session_state["result"]
-    st.divider()
 
+    st.divider()
     c1, c2, c3 = st.columns(3)
-    c1.metric("Federal Grants Found", r["federal_count"])
-    c2.metric("Foundations Reviewed", r["foundation_count"])
+    c1.metric("Federal Grants Found",        len(r["federal_grants"]))
+    c2.metric("Foundations Reviewed",         len(r["foundation_data"]))
     c3.metric("Similar Nonprofits (990 data)", r["prospect_count"])
 
-    st.subheader("📋 Federal Grant Opportunities")
-    st.markdown(r["federal_section"])
+    # AI analysis (only if it worked)
+    if r["ai_federal"] or r["ai_foundations"]:
+        with st.expander("✨ AI Fit Analysis", expanded=True):
+            if r["ai_federal"]:
+                st.markdown(r["ai_federal"])
+            if r["ai_foundations"]:
+                st.markdown(r["ai_foundations"])
 
+    # Federal grants — always shown
+    st.subheader(f"📋 Federal Grant Opportunities ({len(r['federal_grants'])} found)")
+    for i, g in enumerate(r["federal_grants"], 1):
+        with st.expander(f"{i}. {g['title']}", expanded=False):
+            col_a, col_b = st.columns(2)
+            col_a.markdown(f"**Agency:** {g['agency']}")
+            col_a.markdown(f"**Award ceiling:** {_fmt_award(g)}")
+            col_b.markdown(f"**Deadline:** {g.get('close_date') or 'TBD'}")
+            col_b.markdown(f"**Status:** {g.get('status', 'Unknown')}")
+            st.markdown(f"**Apply:** [{g['url']}]({g['url']})")
+            if g.get("description"):
+                st.caption(g["description"][:400])
+
+    # Foundations — always shown
     st.divider()
-    st.subheader("🏛️ Private Foundation Prospects")
-    st.markdown(r["foundations_section"])
+    st.subheader(f"🏛️ Private Foundation Grant Pages ({len(r['foundation_data'])} reviewed)")
+    for f in r["foundation_data"]:
+        with st.expander(f["name"], expanded=False):
+            st.markdown(f"**What they fund:** {f['about']}")
+            st.markdown(f"**Grant portal:** [{f['url']}]({f['url']})")
 
+    # Download buttons
     st.divider()
-    report = f"""# YEA Today — Grant Opportunities Report
-**Generated:** {r['today']}
-**Sources:** Grants.gov (federal) | {r['foundation_count']} private foundation websites | ProPublica 990 data
+    st.markdown("### Download Full Report")
 
----
-
-{r['federal_section']}
-
----
-
-{r['foundations_section']}
-"""
+    report = build_report(
+        r["today"], r["federal_grants"], r["foundation_data"],
+        r["ai_federal"], r["ai_foundations"],
+    )
     date_str = datetime.now().strftime("%Y-%m-%d")
     dl1, dl2, dl3 = st.columns(3)
 
     with dl1:
         try:
-            docx_bytes = report_as_docx_bytes(report)
             st.download_button(
                 "📥 Download as Word (.docx)",
-                data=docx_bytes,
+                data=report_as_docx_bytes(report),
                 file_name=f"grant-report-{date_str}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True,
@@ -197,10 +256,9 @@ if "result" in st.session_state:
 
     with dl2:
         try:
-            pdf_bytes = report_as_pdf_bytes(report)
             st.download_button(
                 "📥 Download as PDF",
-                data=pdf_bytes,
+                data=report_as_pdf_bytes(report),
                 file_name=f"grant-report-{date_str}.pdf",
                 mime="application/pdf",
                 use_container_width=True,
@@ -218,7 +276,6 @@ if "result" in st.session_state:
         )
 
     st.caption(
-        "This is a live, scoped demo — it queries all three sources for real, in real time. "
-        "The full CLI agent (same codebase) also drafts complete grant application narratives "
-        "for the top matches."
+        "Federal grants link directly to Grants.gov. Foundation links go to each "
+        "foundation's grant or apply page — check them for current open RFPs."
     )
