@@ -176,7 +176,7 @@ FOUNDATIONS = [
     {
         "name": "Patagonia Environmental Grants",
         "url": "https://www.patagonia.com/how-we-fund-grassroots/",
-        "about": "Funds grassroots environmental activism, land and water conservation, biodiversity protection, wilderness, and climate advocacy organizations",
+        "about": "Funds grassroots environmental activism, land and water conservation, biodiversity, wilderness, urban green spaces, community land trusts, and climate advocacy",
     },
     {
         "name": "National Geographic Society",
@@ -225,7 +225,7 @@ FOUNDATIONS = [
     {
         "name": "W.K. Kellogg Foundation",
         "url": "https://www.wkkf.org/grants",
-        "about": "Funds vulnerable children, early childhood education, racial equity, food security, nutrition, community healing, and economic opportunity programs",
+        "about": "Funds vulnerable children, early childhood education, racial equity, food security, nutrition, food systems, urban agriculture, garden programs, and economic opportunity",
     },
     {
         "name": "Harry and Jeanette Weinberg Foundation",
@@ -284,7 +284,7 @@ FOUNDATIONS = [
     {
         "name": "National 4-H Foundation",
         "url": "https://4-hfund.org/grants/",
-        "about": "Funds rural and urban youth development, STEM education, agriculture, food and nutrition, life skills, leadership, and 4-H community programs",
+        "about": "Funds rural and urban youth development, STEM education, agriculture, gardening, food and nutrition, animal science, life skills, and leadership programs",
     },
     {
         "name": "Tory Burch Foundation",
@@ -366,12 +366,12 @@ FOUNDATIONS = [
     {
         "name": "Whole Kids Foundation",
         "url": "https://www.wholekidsfoundation.org/programs/school-garden-grant",
-        "about": "Funds school garden programs, healthy eating and nutrition education for children, salad bars in schools, and childhood nutrition programs",
+        "about": "Funds school garden grants, community garden programs, healthy eating and nutrition education for children, salad bars in schools, and urban gardening programs",
     },
     {
         "name": "Feeding America",
         "url": "https://www.feedingamerica.org/our-work/partner-with-us",
-        "about": "Funds food banks, hunger relief programs, food insecurity, food pantries, meal programs, and hunger advocacy for low-income families",
+        "about": "Funds food banks, hunger relief, food insecurity, food pantries, meal programs, community gardens, urban farms, and hunger advocacy for low-income families",
     },
 
     # ── Animal Welfare ───────────────────────────────────────────────────────────

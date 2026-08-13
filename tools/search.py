@@ -5,12 +5,19 @@ import requests
 GRANTS_GOV_URL = "https://apply07.grants.gov/grantsws/rest/opportunities/search/"
 
 # Strip natural-language filler so only meaningful keywords reach Grants.gov.
-# e.g. "find grants for children with cancer" → "children with cancer"
+# Handles two forms:
+#   "find/show/search/get [me] [grants for] X"  →  "X"
+#   "grants for X" / "grant for X"              →  "X"   (no action verb needed)
 _FILLER = re.compile(
-    r"^(?:find|show(?: me)?|get|search(?: for)?|look(?: up| for)?"
+    r"^(?:"
+    # Form 1: starts with an action verb
+    r"(?:find|show(?: me)?|get|search(?: for)?|look(?: up| for)?"
     r"|give me|help me find|can you find|i(?:'?m)?\s+(?:looking for|need|want))"
     r"\s+(?:(?:all\s+)?(?:federal\s+)?grants?\s+(?:for|about|on|related to|covering)\s+"
-    r"|funding\s+for\s+|grants?\s+)?",
+    r"|funding\s+for\s+|grants?\s+)?"
+    # Form 2: starts directly with "grants for" / "grant for" (no action verb)
+    r"|(?:all\s+)?(?:federal\s+)?grants?\s+(?:for|about|on|related to|covering)\s+"
+    r")",
     re.IGNORECASE,
 )
 

@@ -159,12 +159,40 @@ def build_report(
 
 # ── Foundation relevance filter ────────────────────────────────────────────────
 
+# Words that appear in nearly every foundation description and would match
+# indiscriminately — they carry no search signal in this context.
 _FND_STOP = {
+    # Common English function words
     "the", "and", "for", "with", "from", "this", "that", "are", "was", "has",
     "have", "been", "into", "also", "its", "our", "which", "will", "more",
-    "find", "show", "get", "grants", "grant", "funding", "nonprofit", "nonprofits",
-    "can", "you", "help", "search", "about", "all", "new", "not", "but",
+    "not", "but", "all", "new", "can", "any", "who", "how",
+    # Search-bar filler words
+    "find", "show", "get", "help", "search",
+    # Nonprofit / funding world generic terms
+    # ("community" appears in almost every foundation's about text — no signal)
+    "grants", "grant", "funding", "fund", "funds",
+    "nonprofit", "nonprofits", "organization", "organizations",
+    "foundation", "foundations",
+    "community", "program", "programs", "service", "services",
+    "support", "initiative", "initiatives",
+    "national", "local", "global", "international",
+    "access", "based", "include", "including", "focused",
+    "people", "individuals", "families", "groups",
 }
+
+
+def _kw_matches(kw: str, text: str) -> bool:
+    """True if keyword appears in text, with basic singular/plural tolerance."""
+    if kw in text:
+        return True
+    # "gardens" → try "garden"; "services" → try "service"; "diseases" → try "disease"
+    if kw.endswith("ies") and len(kw) > 4 and kw[:-3] + "y" in text:
+        return True
+    if kw.endswith("es") and len(kw) > 4 and kw[:-2] in text:
+        return True
+    if kw.endswith("s") and len(kw) > 3 and kw[:-1] in text:
+        return True
+    return False
 
 
 def filter_foundations_for_display(
@@ -181,7 +209,7 @@ def filter_foundations_for_display(
 
     def score(f: dict) -> int:
         text = f"{f['name']} {f['about']}".lower()
-        return sum(1 for kw in keywords if kw in text)
+        return sum(1 for kw in keywords if _kw_matches(kw, text))
 
     scored = [(score(f), f) for f in foundations]
     scored.sort(key=lambda x: x[0], reverse=True)
