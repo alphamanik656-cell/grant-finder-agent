@@ -1,17 +1,18 @@
 """
-YEA Today Grant Finder Agent
+Grant Finder Agent — CLI version
 Searches three sources:
   1. Grants.gov         — federal grants (free public API, no key)
-  2. Foundation scraper — 25 private foundation grant pages (scraped)
+  2. Foundation scraper — 60+ private foundation grant pages (scraped)
   3. ProPublica 990     — historical giving data to find foundation prospects
 
 Uses Ollama to analyze results and generate a report + application drafts.
 
 Setup:
-  1. Install Ollama: https://ollama.com
-  2. Pull a model:   ollama pull llama3.1
-  3. Install deps:   pip install -r requirements.txt
-  4. Run:            python agent.py
+  1. Edit config.py to describe your organization (ORG_PROFILE, GRANT_CRITERIA, SEARCH_QUERIES)
+  2. Install Ollama: https://ollama.com
+  3. Pull a model:   ollama pull llama3.1
+  4. Install deps:   pip install -r requirements.txt
+  5. Run:            python agent.py
 """
 
 import json
@@ -25,7 +26,7 @@ from tools.files import (
     save_draft, save_draft_docx, save_draft_pdf,
     save_report, save_report_docx, save_report_pdf,
 )
-from tools.foundations import fetch_all as fetch_foundations
+from tools.foundations import FOUNDATIONS, fetch_all as fetch_foundations
 from tools.propublica import find_foundation_prospects, format_for_ai as format_prospects
 from tools.search import deduplicate, search_grants_gov
 
@@ -34,15 +35,15 @@ from tools.search import deduplicate, search_grants_gov
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL = "llama3.2"  # 3B model — much faster on CPU than llama3.1 (8B)
 
-SYSTEM_PROMPT = f"""You are a grant research specialist helping YEA Today, a national 501(c)(3) nonprofit focused on youth entrepreneurship programs.
+SYSTEM_PROMPT = f"""You are a grant research specialist helping a nonprofit organization find relevant grant opportunities.
 
-## YEA Today Profile
+## Organization Profile
 {ORG_PROFILE}
 
 ## Grant Criteria
 {GRANT_CRITERIA}
 
-Write in clear, professional nonprofit language. Be specific and tie everything to YEA Today's programs and outcomes. When assessing fit, consider both mission alignment AND practical eligibility."""
+Write in clear, professional nonprofit language. When assessing fit, consider both mission alignment AND practical eligibility. Tie recommendations to the organization's programs and outcomes."""
 
 # ── Ollama helper ─────────────────────────────────────────────────────────────
 
@@ -152,6 +153,9 @@ def chat(user_message: str, max_tokens: int = 3000, num_ctx: int = 8192) -> str:
 
 
 def collect_federal_grants() -> list[dict]:
+    if not SEARCH_QUERIES:
+        print("  WARNING: No search queries defined in config.py SEARCH_QUERIES.")
+        return []
     all_grants = []
     for query in SEARCH_QUERIES:
         print(f"    '{query}'")
@@ -199,7 +203,7 @@ def generate_federal_section(federal_grants: list[dict], today: str) -> str:
     """Analyze federal grants from Grants.gov and return a Markdown section."""
     federal_text = format_federal_grants(federal_grants)
 
-    prompt = f"""Today is {today}. Analyze these {len(federal_grants)} federal grant opportunities from Grants.gov for YEA Today.
+    prompt = f"""Today is {today}. Analyze these {len(federal_grants)} federal grant opportunities from Grants.gov.
 
 {federal_text}
 
@@ -209,7 +213,7 @@ Write the following Markdown section. Rank ALL relevant grants — do not limit 
 **Total found:** {len(federal_grants)} | **Source:** grants.gov
 
 ### Ranked Opportunities
-For each grant that has any relevance to YEA Today, write:
+For each grant that has any relevance to this organization, write:
 
 #### [Rank]. [Grant Title]
 - **Agency:** [agency name]
@@ -217,14 +221,14 @@ For each grant that has any relevance to YEA Today, write:
 - **Deadline:** [date or "TBD"]
 - **Status:** [posted / forecasted]
 - **Link:** [full URL]
-- **Fit assessment:** (2 sentences — why this matches YEA Today and how to position the application)
+- **Fit assessment:** (2 sentences — why this matches the organization's mission and how to position the application)
 - **Fit score:** [X/10]
 
 ### Grants to Watch
 (List any forecasted grants not yet open that are worth monitoring, with their expected open dates if available)
 
 ### Not a Match
-(One-line note for any grants found that clearly don't fit YEA Today's mission)"""
+(One-line note for any grants found that clearly don't fit the organization's mission)"""
 
     return chat(prompt, max_tokens=2000, num_ctx=8192)
 
@@ -249,7 +253,7 @@ def generate_foundations_section(
         print(f"\n  Batch {i}/{len(batches)}: {names}\n")
 
         batch_text = format_foundation_data(batch)
-        prompt = f"""Today is {today}. Analyze these {len(batch)} private foundations for YEA Today and write an entry for EACH ONE.
+        prompt = f"""Today is {today}. Analyze these {len(batch)} private foundations for fit with this organization and write an entry for EACH ONE.
 
 {batch_text}
 
@@ -259,7 +263,7 @@ Use this format for every foundation — do not skip any:
 - **Focus area:** [what they fund]
 - **Grant portal:** [use the exact URL from the data above]
 - **Status:** [Open grant available | Warm prospect — no open RFP | Invitation only | Requires registration]
-- **Fit for YEA Today:** (1 sentence on why it matches youth entrepreneurship programs)
+- **Fit assessment:** (1 sentence on why it matches or doesn't match this organization's mission)
 - **Recommended action:** [Apply now | Submit LOI | Monitor quarterly | Low priority]"""
 
         try:
@@ -278,11 +282,11 @@ Use this format for every foundation — do not skip any:
     print("\n  Analyzing ProPublica 990 data for foundation leads...")
     try:
         prospects_result = chat(
-            f"""Based on this ProPublica 990 data about nonprofits similar to YEA Today, list which foundations or funders are likely warm prospects worth approaching:
+            f"""Based on this ProPublica 990 data about nonprofits similar to this organization, list which foundations or funders are likely warm prospects worth approaching:
 
 {prospect_summary}
 
-Write a "## Foundation Leads from 990 Data" section. List each prospect foundation with one sentence on why they're relevant to YEA Today.""",
+Write a "## Foundation Leads from 990 Data" section. List each prospect foundation with one sentence on why they're relevant to this organization's mission.""",
             max_tokens=800,
             num_ctx=4096,
         )
@@ -309,7 +313,7 @@ def assemble_report(
     today: str,
 ) -> str:
     """Combine both AI-generated sections into a single Markdown report."""
-    return f"""# YEA Today — Grant Opportunities Report
+    return f"""# Grant Opportunities Report
 **Generated:** {today}
 **Sources:** Grants.gov (federal) | {foundation_count} private foundation websites | ProPublica 990 data
 
@@ -362,27 +366,26 @@ def generate_draft(grant_info: dict, source: str) -> str:
         )
         grant_name = grant_info["name"]
 
-    prompt = f"""Write a complete draft grant application narrative for YEA Today for the following opportunity:
+    prompt = f"""Write a complete draft grant application narrative for the following opportunity:
 
 {grant_header}
 
 Write the full narrative in Markdown format:
 
 # Draft Application: {grant_name}
-**Prepared for:** {grant_name}
 **Date:** {today}
 **Status:** DRAFT — review and customize before submitting
 
 ---
 
 ## 1. Organization Description
-(YEA Today's mission, national reach, programs, and track record — 2-3 compelling paragraphs)
+(Describe the organization's mission, reach, programs, and track record — 2-3 compelling paragraphs. Replace placeholder text with actual details.)
 
 ## 2. Problem Statement
-(Why is the youth entrepreneurship gap a serious problem? Who is most affected and how? Use data/statistics where possible — 2 paragraphs)
+(Describe the problem your organization addresses. Who is most affected and how? Use data/statistics where possible — 2 paragraphs)
 
 ## 3. Proposed Program
-(Specifically what YEA Today will do with this grant — be concrete about activities, timeline, and geography — 2-3 paragraphs)
+(What specifically will be done with this grant — concrete activities, timeline, and geography — 2-3 paragraphs)
 
 ## 4. Goals and Measurable Outcomes
 (4-6 SMART goals with specific numbers and 12-month timelines)
@@ -391,13 +394,13 @@ Write the full narrative in Markdown format:
 (How grant funds will be used — break down by category: personnel, program delivery, materials, travel, evaluation. Align to the grant amount or typical foundation range)
 
 ## 6. Evaluation Plan
-(How YEA Today will measure and report success — data collected, frequency, reporting format)
+(How success will be measured and reported — data collected, frequency, reporting format)
 
 ## 7. Organizational Capacity
-(Why YEA Today is qualified — staff expertise, national infrastructure, prior grants, partnerships)
+(Why this organization is qualified — staff expertise, infrastructure, prior grants, partnerships)
 
 ---
-*Draft only. Add specific staff names, actual budget figures, current outcome data, and any required attachments before submitting.*"""
+*Draft only. Add specific staff names, actual budget figures, current outcome data, and required attachments before submitting.*"""
 
     return chat(prompt)
 
@@ -406,11 +409,11 @@ Write the full narrative in Markdown format:
 
 
 def run():
-    print("YEA Today Grant Finder Agent")
+    print("Grant Finder Agent")
     print("=" * 55)
     print(f"Started:      {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"AI model:     {MODEL} (local, via Ollama)")
-    print(f"Sources:      Grants.gov + 25 foundation sites + ProPublica 990s")
+    print(f"Sources:      Grants.gov + {len(FOUNDATIONS)} foundation sites + ProPublica 990s")
     print()
 
     if not check_ollama():
@@ -437,13 +440,13 @@ def run():
 
     # ── Phase 1b: Foundation scraping ──
     print("Phase 1b — Scraping private foundation grant pages...")
-    print("  (fetching 25 foundation websites — takes ~30 seconds)\n")
+    print(f"  (fetching {len(FOUNDATIONS)} foundation websites — takes 1-2 minutes)\n")
     foundation_data = fetch_foundations(verbose=True)
     print(f"\n  -> {len(foundation_data)} foundation pages fetched\n")
 
     # ── Phase 1c: ProPublica prospect research ──
     print("Phase 1c — Searching ProPublica 990 data for foundation prospects...")
-    similar_orgs = find_foundation_prospects(max_orgs=10)
+    similar_orgs = find_foundation_prospects(search_terms=list(SEARCH_QUERIES) or None, max_orgs=10)
     prospect_summary = format_prospects(similar_orgs)
     print(f"  -> {len(similar_orgs)} similar organizations found\n")
 
