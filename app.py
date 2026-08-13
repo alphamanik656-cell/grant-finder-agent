@@ -8,7 +8,7 @@ from datetime import datetime
 import streamlit as st
 
 from agent import SYSTEM_PROMPT, format_federal_grants, format_foundation_data
-from config import SEARCH_QUERIES
+from config import SEARCH_QUERIES, ORG_PROFILE
 from tools.files import report_as_docx_bytes, report_as_pdf_bytes
 from tools.foundations import FOUNDATIONS, fetch_all as fetch_foundations
 from tools.propublica import find_foundation_prospects, format_for_ai as format_prospects
@@ -22,6 +22,8 @@ st.set_page_config(
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL   = "gemini-2.0-flash"
+
+DEFAULT_QUERIES_TEXT = "\n".join(SEARCH_QUERIES)
 
 
 # ── AI helper ──────────────────────────────────────────────────────────────────
@@ -42,14 +44,21 @@ def gemini(prompt: str) -> str | None:
         return None
 
 
-# ── Raw-data formatters (always run, no AI needed) ─────────────────────────────
+# ── Report builders (always run, no AI needed) ────────────────────────────────
 
-def build_federal_section(grants: list[dict]) -> str:
+def build_federal_section(grants: list[dict], queries_used: list[str]) -> str:
+    query_list = ", ".join(f'"{q}"' for q in queries_used)
     if not grants:
-        return "_No federal grants found for these search terms._\n"
+        return (
+            f"## Federal Grant Opportunities\n"
+            f"_No grants found for: {query_list}_\n\n"
+            "Try broader or different search terms.\n"
+        )
     lines = [
         "## Federal Grant Opportunities",
-        f"**{len(grants)} grants found on Grants.gov** — click each link to see the full listing including award amounts\n",
+        f"**{len(grants)} grants found on Grants.gov**",
+        f"**Search terms used:** {query_list}",
+        f"\nClick each link to see the full listing including award amounts.\n",
     ]
     for i, g in enumerate(grants, 1):
         lines += [
@@ -61,7 +70,9 @@ def build_federal_section(grants: list[dict]) -> str:
         ]
         if g.get("cfda"):
             lines.append(f"- **CFDA #:** {g['cfda']}")
-        lines.append(f"- **Full listing (award amount + how to apply):** [{g['url']}]({g['url']})")
+        lines.append(
+            f"- **Full listing (award amount + how to apply):** [{g['url']}]({g['url']})"
+        )
         lines.append("")
     return "\n".join(lines)
 
@@ -71,7 +82,7 @@ def build_foundations_section(foundations: list[dict]) -> str:
         return "_No foundation data available._\n"
     lines = [
         "## Private Foundation Grant Pages",
-        f"**{len(foundations)} foundations reviewed** — click each grant portal link to check current open applications\n",
+        f"**{len(foundations)} foundations reviewed** — click each link to check for open applications\n",
     ]
     for f in foundations:
         lines += [
@@ -83,9 +94,10 @@ def build_foundations_section(foundations: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def build_report(today: str, federal_grants: list[dict], foundations: list[dict],
-                 ai_federal: str | None, ai_foundations: str | None) -> str:
-    federal_raw     = build_federal_section(federal_grants)
+def build_report(today: str, queries_used: list[str], federal_grants: list[dict],
+                 foundations: list[dict], ai_federal: str | None,
+                 ai_foundations: str | None) -> str:
+    federal_raw     = build_federal_section(federal_grants, queries_used)
     foundations_raw = build_foundations_section(foundations)
 
     ai_block = ""
@@ -96,8 +108,10 @@ def build_report(today: str, federal_grants: list[dict], foundations: list[dict]
             + (ai_foundations or "") + "\n\n---\n\n"
         )
 
+    query_line = ", ".join(f'"{q}"' for q in queries_used)
     return f"""# YEA Today — Grant Opportunities Report
 **Generated:** {today}
+**Search terms:** {query_line}
 **Sources:** Grants.gov (federal) | {len(foundations)} private foundation websites | ProPublica 990 data
 
 ---
@@ -111,9 +125,9 @@ def build_report(today: str, federal_grants: list[dict], foundations: list[dict]
 ---
 
 ## How to Apply
-- **Federal grants:** click the Grants.gov link and hit "Apply" — you'll need a SAM.gov registration
-- **Foundation grants:** click each grant portal to check whether an application is currently open
-- All deadlines above are as of the report date — verify current deadlines before submitting
+- **Federal grants:** click the Grants.gov link for the full listing, then click "Apply" — you will need a SAM.gov registration
+- **Foundation grants:** click each grant portal link to check whether an application is currently open
+- Verify all deadlines directly on the funder's website before submitting
 """
 
 
@@ -121,25 +135,80 @@ def build_report(today: str, federal_grants: list[dict], foundations: list[dict]
 
 st.title("🔍 YEA Today Grant Finder")
 st.caption(
-    "Searches Grants.gov, 25 private foundation grant pages, and ProPublica 990 filings "
-    "live — then lists every result with a direct link to apply."
+    "Search Grants.gov and 25 private foundation pages live. "
+    "Enter your own search terms below, or use the YEA Today defaults."
 )
 
-run = st.button("🔍 Run Grant Search", type="primary")
+# ── Search bar ────────────────────────────────────────────────────────────────
+st.subheader("What are you looking for?")
+
+col_input, col_tip = st.columns([2, 1])
+
+with col_input:
+    user_query_text = st.text_area(
+        "Enter search terms — one per line",
+        placeholder=(
+            "Examples:\n"
+            "STEM education underserved youth\n"
+            "women entrepreneurs small business\n"
+            "workforce training rural communities\n"
+            "financial literacy high school students"
+        ),
+        height=130,
+        help="Each line becomes a separate Grants.gov search. More lines = broader results.",
+    )
+    use_defaults = st.checkbox(
+        "Also include YEA Today default searches (youth entrepreneurship, workforce development, etc.)",
+        value=not bool(user_query_text.strip()),
+    )
+
+with col_tip:
+    st.info(
+        "**Tips for better results:**\n\n"
+        "- Be specific: _STEM high school nonprofits_\n"
+        "- Try the grant's focus area: _career readiness_\n"
+        "- Add your population: _Latino youth entrepreneurship_\n"
+        "- Try program type: _mentorship small business_"
+    )
+
+# Build the final query list from user input + optional defaults
+def resolve_queries(user_text: str, include_defaults: bool) -> list[str]:
+    custom = [q.strip() for q in user_text.splitlines() if q.strip()]
+    if include_defaults:
+        # merge, preserving order, deduplicating case-insensitively
+        seen   = {q.lower() for q in custom}
+        merged = list(custom)
+        for q in SEARCH_QUERIES:
+            if q.lower() not in seen:
+                merged.append(q)
+                seen.add(q.lower())
+        return merged
+    return custom if custom else SEARCH_QUERIES   # fallback to defaults if nothing typed
+
+queries_to_run = resolve_queries(user_query_text, use_defaults)
+
+# Preview what will be searched
+with st.expander(f"📋 {len(queries_to_run)} search terms queued — click to preview", expanded=False):
+    for q in queries_to_run:
+        st.markdown(f"- `{q}`")
+
+st.divider()
+run = st.button("🔍 Run Grant Search", type="primary", use_container_width=False)
 
 if run:
     today = datetime.now().strftime("%B %d, %Y")
 
-    with st.status("Searching Grants.gov for federal opportunities...", expanded=True) as status:
+    with st.status("Searching Grants.gov...", expanded=True) as status:
 
-        # Phase 1: Federal grants
+        # Phase 1: Federal grants using user-driven queries
         federal_grants = []
-        for q in SEARCH_QUERIES:
+        for i, q in enumerate(queries_to_run, 1):
+            status.update(label=f"Searching Grants.gov: '{q}' ({i}/{len(queries_to_run)})...")
             federal_grants.extend(search_grants_gov(q, rows=20))
         federal_grants = deduplicate(federal_grants)
         st.write(f"Found **{len(federal_grants)}** unique federal grants.")
 
-        # Phase 2: Foundation scraping
+        # Phase 2: Foundation scraping (always the curated list)
         status.update(label=f"Scraping {len(FOUNDATIONS)} private foundation grant pages...")
         progress = st.progress(0.0)
 
@@ -152,31 +221,35 @@ if run:
 
         # Phase 3: ProPublica
         status.update(label="Cross-referencing ProPublica 990 filings...")
-        similar_orgs    = find_foundation_prospects(max_orgs=10)
+        similar_orgs     = find_foundation_prospects(max_orgs=10)
         prospect_summary = format_prospects(similar_orgs)
         st.write(f"Found **{len(similar_orgs)}** similar nonprofits in IRS 990 data.")
 
         # Phase 4: Optional AI ranking
         ai_federal = ai_foundations = None
         if GEMINI_API_KEY:
-            status.update(label="Running AI fit analysis (bonus)...")
-            ai_federal = gemini(f"""Today is {today}. For each of these {len(federal_grants)} federal grants, write one short paragraph assessing fit for YEA Today and give a fit score (X/10). Be concise.
-
-{format_federal_grants(federal_grants)}""")
-
-            ai_foundations = gemini(f"""Today is {today}. For each foundation below, write one bullet with fit assessment and recommended action (Apply now / Submit LOI / Monitor / Low priority).
-
-{format_foundation_data(foundation_data[:15])}""")
+            status.update(label="Running AI fit analysis...")
+            ai_federal = gemini(
+                f"Today is {today}. For each federal grant below, write one short paragraph "
+                f"assessing fit for YEA Today and give a fit score (X/10). Be concise.\n\n"
+                f"{format_federal_grants(federal_grants)}"
+            )
+            ai_foundations = gemini(
+                f"Today is {today}. For each foundation below, write one bullet with fit "
+                f"assessment and recommended action (Apply now / Submit LOI / Monitor / Low priority).\n\n"
+                f"{format_foundation_data(foundation_data[:15])}"
+            )
 
         status.update(label="Done!", state="complete")
 
     st.session_state["result"] = {
-        "today":            today,
-        "federal_grants":   federal_grants,
-        "foundation_data":  foundation_data,
-        "prospect_count":   len(similar_orgs),
-        "ai_federal":       ai_federal,
-        "ai_foundations":   ai_foundations,
+        "today":           today,
+        "queries_used":    queries_to_run,
+        "federal_grants":  federal_grants,
+        "foundation_data": foundation_data,
+        "prospect_count":  len(similar_orgs),
+        "ai_federal":      ai_federal,
+        "ai_foundations":  ai_foundations,
     }
 
 
@@ -187,9 +260,15 @@ if "result" in st.session_state:
 
     st.divider()
     c1, c2, c3 = st.columns(3)
-    c1.metric("Federal Grants Found",        len(r["federal_grants"]))
-    c2.metric("Foundations Reviewed",         len(r["foundation_data"]))
+    c1.metric("Federal Grants Found",         len(r["federal_grants"]))
+    c2.metric("Foundations Reviewed",          len(r["foundation_data"]))
     c3.metric("Similar Nonprofits (990 data)", r["prospect_count"])
+
+    # Show which queries produced these results
+    st.caption(
+        "Search terms used: "
+        + " · ".join(f"`{q}`" for q in r["queries_used"])
+    )
 
     # AI analysis (only if it worked)
     if r["ai_federal"] or r["ai_foundations"]:
@@ -201,6 +280,8 @@ if "result" in st.session_state:
 
     # Federal grants — always shown
     st.subheader(f"📋 Federal Grant Opportunities ({len(r['federal_grants'])} found)")
+    if not r["federal_grants"]:
+        st.info("No federal grants matched your search terms. Try broader or different keywords.")
     for i, g in enumerate(r["federal_grants"], 1):
         with st.expander(f"{i}. {g['title']}", expanded=False):
             col_a, col_b = st.columns(2)
@@ -210,7 +291,9 @@ if "result" in st.session_state:
             col_b.markdown(f"**Status:** {g.get('status', 'Unknown')}")
             if g.get("cfda"):
                 st.markdown(f"**CFDA #:** {g['cfda']}")
-            st.markdown(f"**Full listing (award amount + how to apply):** [{g['url']}]({g['url']})")
+            st.markdown(
+                f"**Full listing (award amount + how to apply):** [{g['url']}]({g['url']})"
+            )
 
     # Foundations — always shown
     st.divider()
@@ -225,8 +308,8 @@ if "result" in st.session_state:
     st.markdown("### Download Full Report")
 
     report = build_report(
-        r["today"], r["federal_grants"], r["foundation_data"],
-        r["ai_federal"], r["ai_foundations"],
+        r["today"], r["queries_used"], r["federal_grants"],
+        r["foundation_data"], r["ai_federal"], r["ai_foundations"],
     )
     date_str = datetime.now().strftime("%Y-%m-%d")
     dl1, dl2, dl3 = st.columns(3)
