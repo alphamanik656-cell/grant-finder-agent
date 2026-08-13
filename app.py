@@ -157,6 +157,27 @@ def build_report(
 """
 
 
+# ── Federal grant title relevance scoring ─────────────────────────────────────
+
+def _federal_relevance_score(title: str, queries: list[str]) -> int:
+    """
+    Score a grant title against the user's search queries.
+    Exact phrase match scores 10; individual whole-word matches score 1 each.
+    Word-boundary matching prevents 'security' from matching inside 'cybersecurity'.
+    """
+    title_lower = title.lower()
+    score = 0
+    for q in queries:
+        q_lower = q.lower()
+        if q_lower in title_lower:
+            score += 10
+        else:
+            for word in re.split(r"\W+", q_lower):
+                if len(word) > 3 and re.search(r"\b" + re.escape(word) + r"\b", title_lower):
+                    score += 1
+    return score
+
+
 # ── Foundation relevance filter ────────────────────────────────────────────────
 
 # Words that appear in nearly every foundation description and would match
@@ -322,13 +343,19 @@ if run and queries_to_run:
 
     with st.status("Searching Grants.gov...", expanded=True) as status:
 
-        # Phase 1: Federal grants
+        # Phase 1: Federal grants — fetch 50 per query, then sort by title relevance
         federal_grants = []
         for i, q in enumerate(queries_to_run, 1):
             status.update(label=f"Searching Grants.gov: '{q}' ({i}/{len(queries_to_run)})...")
-            federal_grants.extend(search_grants_gov(q, rows=20))
+            federal_grants.extend(search_grants_gov(q, rows=50))
         federal_grants = deduplicate(federal_grants)
-        st.write(f"Found **{len(federal_grants)}** unique federal grants.")
+        federal_grants.sort(
+            key=lambda g: _federal_relevance_score(g.get("title", ""), queries_to_run),
+            reverse=True,
+        )
+        # Limit to top 25 after relevance sort so the UI stays manageable
+        federal_grants = federal_grants[:25]
+        st.write(f"Found **{len(federal_grants)}** federal grants (sorted by title relevance).")
 
         # Phase 2: Foundation data (instant — no scraping)
         status.update(label=f"Loading {len(FOUNDATIONS)} foundation records...")
@@ -378,7 +405,7 @@ if run and queries_to_run:
         "foundation_data":     foundation_data,
         "display_foundations": display_foundations,
         "fnd_note":            fnd_note,
-        "prospect_count":      len(similar_orgs),
+        "similar_orgs":        similar_orgs,
         "ai_federal":          ai_federal,
         "ai_foundations":      ai_foundations,
         "org_name":            org_name,
@@ -394,7 +421,7 @@ if "result" in st.session_state:
     c1, c2, c3 = st.columns(3)
     c1.metric("Federal Grants Found",         len(r["federal_grants"]))
     c2.metric("Foundations Matched",           len(r["display_foundations"]))
-    c3.metric("Similar Nonprofits (990 data)", r["prospect_count"])
+    c3.metric("Similar Nonprofits (990 data)", len(r.get("similar_orgs", [])))
 
     st.caption(
         "Search terms used: "
@@ -415,6 +442,13 @@ if "result" in st.session_state:
         st.info(
             "No federal grants matched your search terms. "
             "Try more specific keywords, different terminology, or fewer words per line."
+        )
+    else:
+        st.caption(
+            "Sorted by title relevance — grants whose titles best match your search terms "
+            "appear first. Grants.gov searches the full text of all grant documents, so some "
+            "results may match because the topic appears in eligibility or program descriptions, "
+            "not the grant title. Click each link to see award amounts and confirm the fit."
         )
     for i, g in enumerate(r["federal_grants"], 1):
         with st.expander(f"{i}. {g['title']}", expanded=False):
@@ -446,6 +480,30 @@ if "result" in st.session_state:
         with st.expander(f["name"], expanded=False):
             st.markdown(f"**What they fund:** {f['about']}")
             st.markdown(f"**Grant portal:** [{f['url']}]({f['url']})")
+
+    # ProPublica similar nonprofits
+    similar_orgs = r.get("similar_orgs", [])
+    if similar_orgs:
+        st.divider()
+        st.subheader(f"🔬 Similar Nonprofits Found in IRS 990 Database ({len(similar_orgs)} found)")
+        st.caption(
+            "These nonprofits have missions similar to your search terms. "
+            "Check their IRS 990 filings to see which foundations have funded comparable work — "
+            "a strong signal for which foundations may fund yours."
+        )
+        for org in similar_orgs:
+            revenue_str = f"${org['revenue']:,}" if org.get("revenue") else "Not reported"
+            city_state = ", ".join(filter(None, [org.get("city", ""), org.get("state", "")]))
+            label = f"{org['name']}" + (f" — {city_state}" if city_state else "")
+            with st.expander(label, expanded=False):
+                col_a, col_b = st.columns(2)
+                col_a.markdown(f"**Location:** {city_state or 'N/A'}")
+                col_a.markdown(f"**NTEE Code:** {org.get('ntee_code') or 'N/A'}")
+                col_b.markdown(f"**Annual Revenue:** {revenue_str}")
+                col_b.markdown(f"**EIN:** {org.get('ein') or 'N/A'}")
+                url = org.get("url", "")
+                if url:
+                    st.markdown(f"**IRS 990 Profile:** [{url}]({url})")
 
     # Download buttons
     st.divider()
