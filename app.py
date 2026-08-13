@@ -15,6 +15,7 @@ from datetime import datetime
 import streamlit as st
 
 from agent import SYSTEM_PROMPT, format_federal_grants, format_foundation_data
+from tools.files import report_as_docx_bytes, report_as_pdf_bytes
 from config import SEARCH_QUERIES
 from tools.foundations import FOUNDATIONS, fetch_all as fetch_foundations
 from tools.propublica import find_foundation_prospects, format_for_ai as format_prospects
@@ -178,12 +179,43 @@ if "result" in st.session_state:
 
 {r['foundations_section']}
 """
-    st.download_button(
-        "📥 Download Full Report (.md)",
-        data=report,
-        file_name=f"grant-report-{datetime.now().strftime('%Y-%m-%d')}.md",
-        mime="text/markdown",
-    )
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    dl1, dl2, dl3 = st.columns(3)
+
+    with dl1:
+        try:
+            docx_bytes = report_as_docx_bytes(report)
+            st.download_button(
+                "📥 Download as Word (.docx)",
+                data=docx_bytes,
+                file_name=f"grant-report-{date_str}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+            )
+        except Exception as e:
+            st.error(f"Word export failed: {e}")
+
+    with dl2:
+        try:
+            pdf_bytes = report_as_pdf_bytes(report)
+            st.download_button(
+                "📥 Download as PDF",
+                data=pdf_bytes,
+                file_name=f"grant-report-{date_str}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except Exception as e:
+            st.error(f"PDF export failed: {e}")
+
+    with dl3:
+        st.download_button(
+            "📥 Download as Markdown",
+            data=report,
+            file_name=f"grant-report-{date_str}.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
 
     st.caption(
         "This is a live, scoped demo — it queries all three sources for real, in real time. "

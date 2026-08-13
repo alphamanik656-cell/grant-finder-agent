@@ -21,7 +21,10 @@ from datetime import datetime
 import requests
 
 from config import GRANT_CRITERIA, ORG_PROFILE, SEARCH_QUERIES
-from tools.files import save_draft, save_report
+from tools.files import (
+    save_draft, save_draft_docx, save_draft_pdf,
+    save_report, save_report_docx, save_report_pdf,
+)
 from tools.foundations import fetch_all as fetch_foundations
 from tools.propublica import find_foundation_prospects, format_for_ai as format_prospects
 from tools.search import deduplicate, search_grants_gov
@@ -466,8 +469,17 @@ def run():
         len(federal_grants), len(foundation_data), today
     )
 
-    report_path = save_report(report, f"grant-report-{date_str}")
-    print(f"  -> Report saved to: {report_path}\n")
+    stem = f"grant-report-{date_str}"
+    report_path = save_report(report, stem)
+    print(f"  -> Markdown : {report_path}")
+
+    for fmt, fn in [("Word (.docx)", save_report_docx), ("PDF", save_report_pdf)]:
+        try:
+            p = fn(report, stem)
+            print(f"  -> {fmt:14s}: {p}")
+        except RuntimeError as e:
+            print(f"  -> {fmt:14s}: skipped — {e}")
+    print()
 
     # ── Phase 3: Draft applications ──
     print("Phase 3 — Drafting applications for top opportunities...")
@@ -476,18 +488,26 @@ def run():
     top_federal = federal_grants[:2]
     top_foundation = foundation_data[:1]
 
+    def save_all_draft_formats(content: str, name: str):
+        save_draft(content, name)
+        for fmt, fn in [("docx", save_draft_docx), ("pdf", save_draft_pdf)]:
+            try:
+                fn(content, name)
+            except RuntimeError as e:
+                print(f"     {fmt} skipped — {e}")
+
     for i, grant in enumerate(top_federal, 1):
         title = grant["title"][:60]
         print(f"  Drafting federal {i}/2: {title}...")
         draft = generate_draft(grant, source="federal")
-        path = save_draft(draft, grant["title"])
-        print(f"  -> {path}")
+        save_all_draft_formats(draft, grant["title"])
+        print(f"  -> Saved as .md / .docx / .pdf in output/drafts/")
 
     for f in top_foundation:
         print(f"  Drafting foundation: {f['name']}...")
         draft = generate_draft(f, source="foundation")
-        path = save_draft(draft, f["name"])
-        print(f"  -> {path}")
+        save_all_draft_formats(draft, f["name"])
+        print(f"  -> Saved as .md / .docx / .pdf in output/drafts/")
 
     print(f"\nDone! {datetime.now().strftime('%H:%M')}")
     print(f"  Reports  -> output/reports/")
