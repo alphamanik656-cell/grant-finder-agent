@@ -44,35 +44,24 @@ def gemini(prompt: str) -> str | None:
 
 # ── Raw-data formatters (always run, no AI needed) ─────────────────────────────
 
-def _fmt_award(g: dict) -> str:
-    c = g.get("award_ceiling")
-    if isinstance(c, (int, float)) and c:
-        return f"${c:,.0f}"
-    return str(c) if c else "Not specified"
-
-
 def build_federal_section(grants: list[dict]) -> str:
     if not grants:
         return "_No federal grants found for these search terms._\n"
     lines = [
-        f"## Federal Grant Opportunities",
-        f"**{len(grants)} grants found on Grants.gov** — each link goes directly to the full listing\n",
+        "## Federal Grant Opportunities",
+        f"**{len(grants)} grants found on Grants.gov** — click each link to see the full listing including award amounts\n",
     ]
     for i, g in enumerate(grants, 1):
-        deadline = g.get("close_date") or "TBD"
-        desc     = (g.get("description") or "").strip()
-        if len(desc) > 300:
-            desc = desc[:297] + "..."
         lines += [
             f"### {i}. {g['title']}",
             f"- **Agency:** {g['agency']}",
-            f"- **Award ceiling:** {_fmt_award(g)}",
-            f"- **Deadline:** {deadline}",
+            f"- **Opportunity #:** {g.get('opportunity_number', '')}",
+            f"- **Deadline:** {g.get('close_date') or 'TBD'}",
             f"- **Status:** {g.get('status', 'Unknown')}",
-            f"- **Apply:** [{g['url']}]({g['url']})",
         ]
-        if desc:
-            lines.append(f"- **Description:** {desc}")
+        if g.get("cfda"):
+            lines.append(f"- **CFDA #:** {g['cfda']}")
+        lines.append(f"- **Full listing (award amount + how to apply):** [{g['url']}]({g['url']})")
         lines.append("")
     return "\n".join(lines)
 
@@ -216,12 +205,12 @@ if "result" in st.session_state:
         with st.expander(f"{i}. {g['title']}", expanded=False):
             col_a, col_b = st.columns(2)
             col_a.markdown(f"**Agency:** {g['agency']}")
-            col_a.markdown(f"**Award ceiling:** {_fmt_award(g)}")
+            col_a.markdown(f"**Opportunity #:** {g.get('opportunity_number', '')}")
             col_b.markdown(f"**Deadline:** {g.get('close_date') or 'TBD'}")
             col_b.markdown(f"**Status:** {g.get('status', 'Unknown')}")
-            st.markdown(f"**Apply:** [{g['url']}]({g['url']})")
-            if g.get("description"):
-                st.caption(g["description"][:400])
+            if g.get("cfda"):
+                st.markdown(f"**CFDA #:** {g['cfda']}")
+            st.markdown(f"**Full listing (award amount + how to apply):** [{g['url']}]({g['url']})")
 
     # Foundations — always shown
     st.divider()

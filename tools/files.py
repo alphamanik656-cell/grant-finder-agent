@@ -79,19 +79,57 @@ def _rl_inline(text: str) -> str:
 
 # ── Word (.docx) export ───────────────────────────────────────────────────────
 
+def _add_hyperlink_docx(para, text: str, url: str):
+    """Add a proper clickable hyperlink to a python-docx paragraph."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    r_id = para.part.relate_to(
+        url,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        is_external=True,
+    )
+
+    hl = OxmlElement("w:hyperlink")
+    hl.set(qn("r:id"), r_id)
+
+    r = OxmlElement("w:r")
+
+    rPr = OxmlElement("w:rPr")
+    # Use the built-in Hyperlink character style (blue + underline)
+    rStyle = OxmlElement("w:rStyle")
+    rStyle.set(qn("w:val"), "Hyperlink")
+    rPr.append(rStyle)
+    # Explicit colour + underline as fallback if the style isn't in the template
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), "0563C1")
+    rPr.append(color)
+    u = OxmlElement("w:u")
+    u.set(qn("w:val"), "single")
+    rPr.append(u)
+    r.append(rPr)
+
+    t = OxmlElement("w:t")
+    t.text = text
+    t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    r.append(t)
+
+    hl.append(r)
+    para._p.append(hl)
+
+
 def _add_inline_docx(para, text: str):
-    from docx.shared import RGBColor
     for seg in _split_inline(text):
-        run = para.add_run(seg["t"])
-        if seg.get("bold"):
-            run.bold = True
-        if seg.get("italic"):
-            run.italic = True
-        if seg.get("code"):
-            run.font.name = "Courier New"
         if seg.get("url"):
-            run.font.underline = True
-            run.font.color.rgb = RGBColor(0x00, 0x56, 0xB3)
+            _add_hyperlink_docx(para, seg["t"], seg["url"])
+        else:
+            run = para.add_run(seg["t"])
+            if seg.get("bold"):
+                run.bold = True
+            if seg.get("italic"):
+                run.italic = True
+            if seg.get("code"):
+                run.font.name = "Courier New"
 
 
 def _md_to_docx(doc, md: str):
