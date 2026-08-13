@@ -3,6 +3,7 @@ YEA Today Grant Finder — Streamlit Frontend
 """
 
 import os
+import re
 from datetime import datetime
 
 import streamlit as st
@@ -12,7 +13,7 @@ from config import SEARCH_QUERIES, ORG_PROFILE
 from tools.files import report_as_docx_bytes, report_as_pdf_bytes
 from tools.foundations import FOUNDATIONS, fetch_all as fetch_foundations
 from tools.propublica import find_foundation_prospects, format_for_ai as format_prospects
-from tools.search import deduplicate, search_grants_gov
+from tools.search import clean_query, deduplicate, search_grants_gov
 
 st.set_page_config(
     page_title="YEA Today Grant Finder",
@@ -77,13 +78,16 @@ def build_federal_section(grants: list[dict], queries_used: list[str]) -> str:
     return "\n".join(lines)
 
 
-def build_foundations_section(foundations: list[dict]) -> str:
+def build_foundations_section(foundations: list[dict], note: str = "") -> str:
     if not foundations:
         return "_No foundation data available._\n"
     lines = [
         "## Private Foundation Grant Pages",
-        f"**{len(foundations)} foundations reviewed** — click each link to check for open applications\n",
+        f"**{len(foundations)} foundations reviewed** — click each link to check for open applications",
+        "",
     ]
+    if note:
+        lines += [f"> {note}", ""]
     for f in foundations:
         lines += [
             f"### {f['name']}",
@@ -98,7 +102,13 @@ def build_report(today: str, queries_used: list[str], federal_grants: list[dict]
                  foundations: list[dict], ai_federal: str | None,
                  ai_foundations: str | None) -> str:
     federal_raw     = build_federal_section(federal_grants, queries_used)
-    foundations_raw = build_foundations_section(foundations)
+    foundations_raw = build_foundations_section(
+        foundations,
+        note=(
+            "These 25 foundations are curated for youth entrepreneurship nonprofits. "
+            "Check each link for open applications relevant to your specific focus area."
+        ),
+    )
 
     ai_block = ""
     if ai_federal or ai_foundations:
@@ -187,7 +197,8 @@ else:
 
 
 def resolve_queries(user_text: str, include_defaults: bool) -> list[str]:
-    custom = [q.strip() for q in user_text.splitlines() if q.strip()]
+    # clean_query strips filler like "find grants for" before sending to Grants.gov
+    custom = [clean_query(q.strip()) for q in user_text.splitlines() if q.strip()]
     if not custom:
         return list(SEARCH_QUERIES)          # nothing typed → always use defaults
     if not include_defaults:
@@ -199,6 +210,60 @@ def resolve_queries(user_text: str, include_defaults: bool) -> list[str]:
         if q.lower() not in seen:
             merged.append(q)
     return merged
+
+
+# ── Foundation relevance filter ────────────────────────────────────────────────
+
+_FND_STOP = {
+    "the", "and", "for", "with", "from", "this", "that", "are", "was", "has",
+    "have", "been", "into", "also", "its", "our", "which", "will", "more",
+    "find", "show", "get", "grants", "grant", "funding", "nonprofit", "nonprofits",
+    "can", "you", "help", "search", "about", "all", "new", "not", "but",
+}
+
+
+def filter_foundations_for_display(
+    foundations: list[dict], queries: list[str]
+) -> tuple[list[dict], str]:
+    """
+    Rank and filter the curated foundation list by keyword relevance.
+    Returns (foundation_list, note_string).
+    """
+    keywords = set()
+    for q in queries:
+        for word in re.split(r"\W+", q.lower()):
+            if len(word) > 2 and word not in _FND_STOP:
+                keywords.add(word)
+
+    if not keywords:
+        return foundations, ""
+
+    def score(f: dict) -> int:
+        text = f"{f['name']} {f['about']}".lower()
+        return sum(1 for kw in keywords if kw in text)
+
+    scored = [(score(f), f) for f in foundations]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    relevant = [f for s, f in scored if s > 0]
+
+    if not relevant:
+        return foundations, (
+            "None of the 25 curated foundations closely match your search keywords — "
+            "they focus on youth entrepreneurship and adjacent topics. "
+            "All are shown below. For grants specific to your topic, also try "
+            "**[Candid (Foundation Directory)](https://candid.org)**, "
+            "**[GrantWatch](https://www.grantwatch.com)**, or "
+            "**[Instrumentl](https://www.instrumentl.com)**."
+        )
+
+    if len(relevant) < len(foundations):
+        return relevant, (
+            f"{len(relevant)} of {len(foundations)} curated foundations are most relevant to your search. "
+            "These foundations are curated for youth entrepreneurship nonprofits — check each link for "
+            "open applications that may fit your specific focus."
+        )
+
+    return foundations, ""
 
 
 queries_to_run = resolve_queries(user_query_text, add_yea_defaults)
@@ -270,6 +335,7 @@ if run:
         "prospect_count":  len(similar_orgs),
         "ai_federal":      ai_federal,
         "ai_foundations":  ai_foundations,
+        "has_custom":      has_custom,
     }
 
 
@@ -315,10 +381,26 @@ if "result" in st.session_state:
                 f"**Full listing (award amount + how to apply):** [{g['url']}]({g['url']})"
             )
 
-    # Foundations — always shown
+    # Foundations — always shown; filtered by relevance when a custom search is active
     st.divider()
-    st.subheader(f"🏛️ Private Foundation Grant Pages ({len(r['foundation_data'])} reviewed)")
-    for f in r["foundation_data"]:
+    if r.get("has_custom"):
+        display_foundations, fnd_note = filter_foundations_for_display(
+            r["foundation_data"], r["queries_used"]
+        )
+        fnd_label = f"🏛️ Private Foundation Grant Pages ({len(display_foundations)} of {len(r['foundation_data'])} shown)"
+    else:
+        display_foundations = r["foundation_data"]
+        fnd_note = (
+            "These 25 foundations are curated for youth entrepreneurship nonprofits. "
+            "Enter a custom search above to see which are most relevant to your specific topic."
+        )
+        fnd_label = f"🏛️ Private Foundation Grant Pages ({len(display_foundations)} curated)"
+
+    st.subheader(fnd_label)
+    if fnd_note:
+        st.info(fnd_note)
+
+    for f in display_foundations:
         with st.expander(f["name"], expanded=False):
             st.markdown(f"**What they fund:** {f['about']}")
             st.markdown(f"**Grant portal:** [{f['url']}]({f['url']})")

@@ -1,6 +1,25 @@
+import re
+
 import requests
 
 GRANTS_GOV_URL = "https://apply07.grants.gov/grantsws/rest/opportunities/search/"
+
+# Strip natural-language filler so only meaningful keywords reach Grants.gov.
+# e.g. "find grants for children with cancer" → "children with cancer"
+_FILLER = re.compile(
+    r"^(?:find|show(?: me)?|get|search(?: for)?|look(?: up| for)?"
+    r"|give me|help me find|can you find|i(?:'?m)?\s+(?:looking for|need|want))"
+    r"\s+(?:(?:all\s+)?(?:federal\s+)?grants?\s+(?:for|about|on|related to|covering)\s+"
+    r"|funding\s+for\s+|grants?\s+)?",
+    re.IGNORECASE,
+)
+
+
+def clean_query(q: str) -> str:
+    """Strip natural-language filler phrases before sending to Grants.gov."""
+    q = q.strip()
+    cleaned = _FILLER.sub("", q).strip()
+    return cleaned if cleaned else q
 
 
 def search_grants_gov(keyword: str, rows: int = 25) -> list[dict]:
