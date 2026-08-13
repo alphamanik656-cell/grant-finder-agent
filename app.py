@@ -147,48 +147,68 @@ col_input, col_tip = st.columns([2, 1])
 with col_input:
     user_query_text = st.text_area(
         "Enter search terms — one per line",
+        key="search_input",
         placeholder=(
             "Examples:\n"
-            "STEM education underserved youth\n"
+            "youth entrepreneurship northeast\n"
+            "children hearing loss disability\n"
             "women entrepreneurs small business\n"
-            "workforce training rural communities\n"
-            "financial literacy high school students"
+            "workforce training rural communities"
         ),
         height=130,
-        help="Each line becomes a separate Grants.gov search. More lines = broader results.",
-    )
-    use_defaults = st.checkbox(
-        "Also include YEA Today default searches (youth entrepreneurship, workforce development, etc.)",
-        value=not bool(user_query_text.strip()),
+        help="Each line is sent as a separate search to Grants.gov. More lines = more results.",
     )
 
 with col_tip:
     st.info(
         "**Tips for better results:**\n\n"
         "- Be specific: _STEM high school nonprofits_\n"
-        "- Try the grant's focus area: _career readiness_\n"
-        "- Add your population: _Latino youth entrepreneurship_\n"
-        "- Try program type: _mentorship small business_"
+        "- Include your population: _Latino youth_\n"
+        "- Include geography: _rural Appalachia_\n"
+        "- Include program type: _mentorship workforce_"
     )
 
-# Build the final query list from user input + optional defaults
+# ── Query resolution — fixed logic ────────────────────────────────────────────
+# Rule: if the user typed ANYTHING, use ONLY their terms.
+# The checkbox only appears when custom terms are present, and defaults to OFF.
+# This prevents the 8 hardcoded defaults from silently overriding a custom search.
+
+has_custom = bool(user_query_text.strip())
+
+if has_custom:
+    add_yea_defaults = st.checkbox(
+        "Also add YEA Today's 8 default searches (youth entrepreneurship, workforce, etc.)",
+        value=False,           # explicitly OFF — user must opt in
+        key="add_yea_defaults",
+    )
+else:
+    add_yea_defaults = False
+    st.caption("No search terms entered — will run YEA Today's 8 default grant searches.")
+
+
 def resolve_queries(user_text: str, include_defaults: bool) -> list[str]:
     custom = [q.strip() for q in user_text.splitlines() if q.strip()]
-    if include_defaults:
-        # merge, preserving order, deduplicating case-insensitively
-        seen   = {q.lower() for q in custom}
-        merged = list(custom)
-        for q in SEARCH_QUERIES:
-            if q.lower() not in seen:
-                merged.append(q)
-                seen.add(q.lower())
-        return merged
-    return custom if custom else SEARCH_QUERIES   # fallback to defaults if nothing typed
+    if not custom:
+        return list(SEARCH_QUERIES)          # nothing typed → always use defaults
+    if not include_defaults:
+        return custom                         # typed something, defaults OFF → custom only
+    # typed something AND defaults ON → merge, custom first
+    seen   = {q.lower() for q in custom}
+    merged = list(custom)
+    for q in SEARCH_QUERIES:
+        if q.lower() not in seen:
+            merged.append(q)
+    return merged
 
-queries_to_run = resolve_queries(user_query_text, use_defaults)
 
-# Preview what will be searched
-with st.expander(f"📋 {len(queries_to_run)} search terms queued — click to preview", expanded=False):
+queries_to_run = resolve_queries(user_query_text, add_yea_defaults)
+
+# Show exactly what will be searched so there's no ambiguity
+with st.expander(
+    f"{'🔎 Custom search' if has_custom else '📋 YEA Today defaults'} — "
+    f"{len(queries_to_run)} term(s) queued (click to see)",
+    expanded=False,
+):
     for q in queries_to_run:
         st.markdown(f"- `{q}`")
 
